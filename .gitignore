@@ -1,0 +1,42 @@
+# ── Never commit data, models, or environments ──
+# Raw & processed data (large + restricted; download via docs/DATA_AND_CODE.md)
+data/
+processed-data/
+*.h5ad
+*.h5
+*.csv.gz
+# but keep small result CSVs in results/
+!results/
+
+# Model weights (Geneformer/GenKI checkpoints; download separately)
+*.ckpt
+*.bin
+*.safetensors
+*.pt
+*.pth
+
+# Environments
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Outputs (regenerable)
+output/
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+*.lnk
+
+# Logs
+*.log
+
+# R session artifacts
+.Rhistory
+.RData
+.Rproj.user/

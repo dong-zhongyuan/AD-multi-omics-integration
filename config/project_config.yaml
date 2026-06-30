@@ -1,0 +1,318 @@
+# AD多组学项目配置文件
+# 生成时间: 2026-05-07
+# 用途: 统一管理所有硬编码的路径、基因名称、参数等
+# 复现包说明：所有路径已相对化。如需自定义，设置环境变量 PROJECT_ROOT 或 DATA_ROOT。
+#   参考 docs/DATA_AND_CODE.md 获取数据下载说明。
+
+# ============================================================================
+# 1. 路径配置（相对路径，相对于 config/ 目录）
+# ============================================================================
+paths:
+  # 项目根目录 (replication package root)
+  project_root: "../"
+
+  # 数据目录 (download datasets separately; see docs/DATA_AND_CODE.md)
+  data_dir: "../data"
+  raw_data_dir: "../data/brain-or-csf-raw"
+  single_cell_dir: "../data/single-cell"
+  survival_dir: "../data/survival"
+
+  # 输出目录
+  output_dir: "../output"
+  processed_data_dir: "../processed-data"
+  logs_dir: "../logs"
+
+  # 工具目录
+  tools_dir: "../code/tools"
+  hepaworld_dir: "../code/tools/hepaworld"
+
+  # 步骤输出目录
+  step1_output: "../output/step1_world_model_transcriptomics_no_pca"
+  step2_output: "../output/step2_cross_tissue_causality"
+  step3_output: "../output/step3_hub_identification"
+  step4_output: "../output/step4_virtual_knockout"
+  step5_output: "../output/step5_clinical_validation"
+
+# ============================================================================
+# 2. 候选基因配置
+# ============================================================================
+genes:
+  # Tier 1 候选基因（8个）
+  tier1:
+    - CHMP5      # 内体分选复合物
+    - THUMPD1    # RNA修饰酶
+    - TMPO       # 核膜蛋白
+    - TIMM9      # 线粒体转运酶
+    - TOR1AIP1   # 核膜蛋白（最重要发现）
+    - CINP       # 细胞周期蛋白
+    - PALB2      # DNA修复蛋白
+    - GADD45GIP1 # DNA损伤应答
+  
+  # Tier 2 候选基因（2个）
+  tier2:
+    - ZNF586     # 锌指蛋白
+    - SRRT       # 转录调控
+  
+  # Tier 3 候选基因（1个）
+  tier3:
+    - ZNF655     # 锌指蛋白
+  
+  # 所有Hub基因（用于Geneformer）
+  all_hub_genes:
+    - CHMP5
+    - CINP
+    - FTH1
+    - GADD45GIP1
+    - GLDC
+    - HUNK
+    - JUNB
+    - MT-CYB
+    - PALB2
+    - SRRT
+    - THUMPD1
+    - TIMM9
+    - TMPO
+    - TOR1AIP1
+    - ZNF586
+    - ZNF655
+  
+  # 共识响应基因（5个100%覆盖）
+  consensus_response_genes:
+    - JUNB       # 转录因子
+    - THUMPD1    # RNA修饰酶
+    - PALB2      # DNA修复蛋白
+    - MT-CYB     # 线粒体细胞色素b
+    - FTH1       # 铁蛋白重链
+
+# ============================================================================
+# 3. 分析参数配置
+# ============================================================================
+parameters:
+  # Step 0: Preprocessing
+  preprocessing:
+    n_top_genes: 3000  # 高变基因数量
+    random_state: 42   # 随机种子
+  
+  # Step 1: World Model
+  world_model:
+    hidden_dim: 128
+    depth: 3
+    dropout: 0.1
+    learning_rate: 0.001
+    batch_size: 128  # 从256改为128（与实际使用一致）
+    epochs: 100
+    steps_per_pair_per_epoch: 200  # 每个epoch的minibatch更新次数
+    n_steps_per_interval: 4        # 时间步数
+    sinkhorn_iters: 50             # Sinkhorn迭代次数
+    
+  # Step 2: Cross-tissue Causality
+  causality:
+    confidence_threshold: 0.5
+    threshold_percentile: 90
+    min_confidence: 0.3
+    dropout: 0.1      # 模型dropout
+    dt: 0.01          # 时间步长
+    
+  # Step 3: Hub Identification
+  hub_detection:
+    hub_threshold_percentile: 90  # 前10%为Hub
+    min_connections: 10
+    strength_percentile: 80       # 边强度阈值（前20%）
+    n_brain_total_transcriptomics: 13780  # 脑细胞总数（转录组）
+    n_brain_total_proteomics: 132         # 脑细胞总数（蛋白组）
+    methods:
+      - degree
+      - betweenness
+      - eigenvector
+    
+  # Step 4: Virtual Knockout
+  virtual_knockout:
+    genki:
+      n_iterations: 1000
+      p_threshold: 0.01
+      max_cells: 3000
+      n_metacells: 100
+      n_comp: 3
+      out_channels: 2
+      epochs: 100
+      learning_rate: 1e-7
+      weight_decay: 1e-9
+      beta: 1.0
+      q_threshold: 0.85
+      n_permutations: 20
+      random_state: 42
+      expression_tolerance: 0.3  # 表达量容忍度
+    
+    geneformer:
+      model_name: "Geneformer-V2-104M"
+      impact_threshold: 0.033
+      min_cells: 100
+      max_cells: 6000
+  
+  # Step 5: Clinical Validation
+  clinical:
+    survival:
+      cox_alpha: 0.05
+      stratify_by:
+        - APOE4
+        - SEX
+        - AGE_GROUP
+      
+    nhanes:
+      age_threshold: 60
+      biomarkers:
+        - WBC
+        - lymphocyte_pct
+        - CRP
+        - hemoglobin
+        - RBC
+
+# ============================================================================
+# 4. 基因-生物标志物映射
+# ============================================================================
+gene_biomarker_mapping:
+  CHMP5:
+    - WBC
+    - lymphocyte_pct
+  
+  THUMPD1:
+    - WBC
+    - hemoglobin
+  
+  TMPO:
+    - WBC
+    - CRP
+  
+  TIMM9:
+    - hemoglobin
+    - RBC
+  
+  TOR1AIP1:
+    - WBC
+    - CRP
+  
+  CINP:
+    - WBC
+    - lymphocyte_pct
+  
+  PALB2:
+    - WBC
+    - CRP
+  
+  GADD45GIP1:
+    - WBC
+    - CRP
+
+# ============================================================================
+# 5. 基因功能注释
+# ============================================================================
+gene_annotations:
+  CHMP5:
+    full_name: "Charged Multivesicular Body Protein 5"
+    function: "内体分选复合物"
+    pathway: "ESCRT pathway"
+    
+  THUMPD1:
+    full_name: "THUMP Domain Containing 1"
+    function: "RNA修饰酶"
+    pathway: "RNA modification"
+    
+  TMPO:
+    full_name: "Thymopoietin"
+    function: "核膜蛋白"
+    pathway: "Nuclear envelope organization"
+    
+  TIMM9:
+    full_name: "Translocase Of Inner Mitochondrial Membrane 9"
+    function: "线粒体转运酶"
+    pathway: "Mitochondrial protein import"
+    
+  TOR1AIP1:
+    full_name: "Torsin 1A Interacting Protein 1"
+    function: "核膜蛋白"
+    pathway: "Nuclear envelope organization, DNA repair"
+    clinical_significance: "最重要发现，独立于APOE4的风险因子"
+    
+  CINP:
+    full_name: "Cyclin Dependent Kinase 2 Interacting Protein"
+    function: "细胞周期蛋白"
+    pathway: "Cell cycle regulation"
+    
+  PALB2:
+    full_name: "Partner And Localizer Of BRCA2"
+    function: "DNA修复蛋白"
+    pathway: "DNA double-strand break repair"
+    clinical_significance: "保护性因子"
+    
+  GADD45GIP1:
+    full_name: "GADD45G Interacting Protein 1"
+    function: "DNA损伤应答"
+    pathway: "DNA damage response"
+
+# ============================================================================
+# 6. 数据文件配置
+# ============================================================================
+data_files:
+  # 单细胞数据
+  brain_seurat: "${data_dir}/brain-or-csf-raw/brain_seurat.rds"
+  blood_seurat: "${data_dir}/single-cell/blood_seurat.rds"
+  
+  # 代谢组数据
+  metabolomics_brain: "${data_dir}/st000046/metabolomics_brain.csv"
+  metabolomics_blood: "${data_dir}/st000047/metabolomics_blood.csv"
+  
+  # 蛋白组数据
+  proteomics_plasma: "${data_dir}/blood-transcription-protein/BSHRI_PLA_CSF_NULISA_CNS_16Apr2026.csv"
+  
+  # 生存分析数据
+  adni_gene_expression: "${data_dir}/survival/ADNI_Gene_Expression_Profile.csv"
+  adni_survival: "${data_dir}/survival/REGISTRY_05May2026.csv"
+  adni_mmse: "${data_dir}/survival/MMSE_05May2026.csv"
+  adni_adas: "${data_dir}/survival/ADAS_05May2026.csv"
+
+# ============================================================================
+# 7. 模型配置
+# ============================================================================
+models:
+  # 不同组学的模型参数
+  transcriptomics:
+    hidden: 64
+    depth: 2
+    dropout: 0.3
+    
+  proteomics:
+    hidden: 128
+    depth: 3
+    dropout: 0.1
+    
+  metabolomics:
+    hidden: 256
+    depth: 3
+    dropout: 0.0
+
+# ============================================================================
+# 8. 可视化配置
+# ============================================================================
+visualization:
+  figure_size:
+    width: 10
+    height: 8
+  
+  dpi: 300
+  
+  color_palette:
+    - "#E64B35"  # 红色
+    - "#4DBBD5"  # 蓝色
+    - "#00A087"  # 绿色
+    - "#3C5488"  # 深蓝
+    - "#F39B7F"  # 橙色
+    - "#8491B4"  # 紫色
+
+# ============================================================================
+# 9. 计算资源配置
+# ============================================================================
+compute:
+  n_jobs: 8          # 并行进程数
+  memory_limit: 32   # GB
+  gpu_enabled: true
+  gpu_device: 0

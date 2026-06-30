@@ -1,0 +1,17 @@
+gene,biomarker,variable,rationale
+MAPT,"WBC (10^9/L)",wbc,tau蛋白神经炎症通路-白细胞响应
+MAPT,"CRP (mg/L)",crp,tau蛋白神经炎症通路-系统性炎症
+FABP3,"WBC (10^9/L)",wbc,脂肪酸结合蛋白-细胞损伤炎症
+FABP3,"Hemoglobin (g/dL)",hemoglobin,脂肪酸代谢-红细胞功能
+PRKAR2B,"WBC (10^9/L)",wbc,PKA信号通路-免疫调节
+PRKAR2B,"Lymphocyte %",lymphocyte_pct,PKA信号通路-淋巴细胞分化
+AGRN,"WBC (10^9/L)",wbc,聚集蛋白-突触/免疫
+AGRN,"CRP (mg/L)",crp,聚集蛋白-炎症标志
+CAVIN2,"WBC (10^9/L)",wbc,小窝蛋白-内皮/免疫
+CAVIN2,"Hemoglobin (g/dL)",hemoglobin,小窝蛋白-血管功能
+LRBA,"WBC (10^9/L)",wbc,LRBA-免疫调节(自身免疫)
+LRBA,"Lymphocyte %",lymphocyte_pct,LRBA-淋巴细胞稳态
+CYB5R3,"Hemoglobin (g/dL)",hemoglobin,细胞色素b5还原酶-高铁血红蛋白还原
+CYB5R3,"RBC (10^12/L)",rbc,细胞色素b5还原酶-红细胞代谢
+SURF1,"Hemoglobin (g/dL)",hemoglobin,线粒体呼吸链-红细胞能量代谢
+SURF1,"RBC (10^12/L)",rbc,线粒体呼吸链-红细胞功能
