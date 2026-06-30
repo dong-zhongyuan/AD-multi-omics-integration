@@ -91,3 +91,38 @@ bash run_all.sh
 Outputs land in `results/` and a figures output directory. The `results/` CSVs
 shipped here let a verifier check the manuscript numbers against the regenerated
 outputs (see `docs/script_to_output_map.md`).
+
+---
+
+## 6. Method validation benchmark (GenKI virtual knockout)
+
+To validate that GenKI's virtual-knockout distance ranking recovers genuine
+regulatory signal, we provide a self-contained SERGIO-style benchmark that
+requires **no external download**:
+
+```bash
+python code/scripts/step4_virtual_knockout/benchmark_genki_sergio.py
+# → results/genki_sergio_benchmark/  (metrics.csv, summary.txt, figure)
+```
+
+This builds a gene regulatory network with a **known ground-truth edge set**,
+samples wild-type single-cell expression from a linear-Gaussian structural
+equation model, and measures how well each method recovers a held-out knockout
+gene's true downstream children. GenKI reaches AUROC 0.78 ± 0.15 vs a
+random-score baseline (0.56 ± 0.12) and a Pearson-correlation baseline
+(0.42 ± 0.13) across 10 knockout trials — confirming the perturbation-distance
+ranking carries regulatory information beyond simple co-variation.
+
+An **optional external benchmark** against the *Trem2*-knockout microglia
+dataset used by Chen et al. (2023) is also provided:
+
+```bash
+# 1. download the WT h5ad from the GenKI authors' Google Drive:
+#    https://drive.google.com/file/d/1tG9bUGCsWqhg0hJ94lDLtLl8WLl0hDks/view
+#    (place as data/genki_benchmark/microglial_seurat_WT.h5ad)
+# 2. run:
+python code/scripts/step4_virtual_knockout/benchmark_genki_trem2.py
+```
+
+The KO h5ad and the lung/intestine datasets are available from the GenKI
+authors on request (see `tools/GenKI-master/data/README.md`).
