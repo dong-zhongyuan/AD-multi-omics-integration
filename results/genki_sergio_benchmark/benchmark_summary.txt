@@ -1,0 +1,12 @@
+GenKI vs scTenifoldKnk — SERGIO-style benchmark (ground-truth GRN)
+============================================================
+
+GenKI                  AUROC = 0.780 +/- 0.154  (n=10)
+scTenifoldKnk          AUROC = nan +/- nan  (n=0)
+Pearson-corr baseline  AUROC = 0.418 +/- 0.126  (n=10)
+Random baseline        AUROC = 0.555 +/- 0.124  (n=10)
+
+GenKI                  AUPRC  = 0.227 +/- 0.161  (n=10)
+scTenifoldKnk          AUPRC  = nan +/- nan  (n=0)
+Pearson-corr baseline  AUPRC  = 0.071 +/- 0.019  (n=10)
+Random baseline        AUPRC  = 0.131 +/- 0.077  (n=10)
