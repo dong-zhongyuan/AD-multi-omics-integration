@@ -24,8 +24,8 @@ If you use this code, please cite:
 }
 ```
 
-> **Authors:** Zhongyuan Dong$^\dagger$, Xuanlin Meng$^{\dagger,*}$, Lianghua Wang$^*$
-> ($^\dagger$ contributed equally; $^*$ corresponding)
+> **Authors:** Zhongyuan Dong$^{\dagger}$, Xuanlin Meng$^{\dagger,\ddagger}$, Lianghua Wang$^*$
+> ($^\dagger$ contributed equally; $^\ddagger$ co-corresponding; $^*$ corresponding)
 
 ---
 
