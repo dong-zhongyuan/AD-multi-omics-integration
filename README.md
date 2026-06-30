@@ -8,6 +8,25 @@ Code and instructions to reproduce:
 
 Target venue: **Cell Reports Medicine**.
 
+## Citation
+
+If you use this code, please cite:
+
+```bibtex
+@article{dong2026neuralode,
+  title={A Neural Ordinary Differential Equation framework learns the continuous
+         cross-tissue regulatory transformation between brain and blood
+         and its transfer to Alzheimer's disease},
+  author={Dong, Zhongyuan and Meng, Xuanlin and Wang, Lianghua},
+  journal={Cell Reports Medicine},
+  year={2026},
+  note={Z. Dong and X. Meng contributed equally}
+}
+```
+
+> **Authors:** Zhongyuan Dong$^\dagger$, Xuanlin Meng$^{\dagger,*}$, Lianghua Wang$^*$
+> ($^\dagger$ contributed equally; $^*$ corresponding)
+
 ---
 
 ## What this package contains
