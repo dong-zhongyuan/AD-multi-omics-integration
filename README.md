@@ -6,8 +6,6 @@ Code and instructions to reproduce:
 > cross-tissue regulatory transformation between brain and blood and its transfer
 > to Alzheimer's disease.*
 
-Target venue: **Cell Reports Medicine**.
-
 ## Citation
 
 If you use this code, please cite:
@@ -32,8 +30,7 @@ If you use this code, please cite:
 ## What this package contains
 
 ```
-AD-Multi-Omics-Replication/
-├── run_all.sh                 # master script: runs the whole pipeline end-to-end
+AD-Multi-Omics-Integration/
 ├── README.md                  # this file
 ├── .gitignore
 ├── code/
@@ -45,12 +42,10 @@ AD-Multi-Omics-Replication/
 │   │   ├── step4_virtual_knockout/         # GenKI + Geneformer validation
 │   │   ├── step5_clinical/                 # diagnostic panel + survival
 │   │   └── step6_external_validation/      # independent AD brain validation
-│   ├── tools/                 # shared utilities + vendored Sinkhorn/ODE (hepaworld/)
-│   └── figures/               # R + Python panel scripts for the 3 main figures
+│   └── tools/                 # shared utilities + vendored Sinkhorn/ODE 
 ├── config/                    # project_config.yaml (paths, genes, parameters)
-├── results/                   # small summary CSVs (for number verification)
-├── environment/
-│   └── requirements.txt       # pinned Python dependencies
+└──  environment/
+    └── requirements.txt       # pinned Python dependencies
 └── docs/
     ├── DATA_AND_CODE.md       # data/model/software access (incl. restricted ADNI)
     └── script_to_output_map.md  # manuscript-number → script → output traceability
@@ -73,11 +68,8 @@ pip install -r environment/requirements.txt
 export DATA_ROOT=/path/to/data
 
 # 3. run end-to-end
-bash run_all.sh
+
 ```
-
-Wall time ≈ 8–12 h on one GPU (Step 1 transcriptomics training dominates).
-
 ---
 
 ## Reproducibility guarantees
