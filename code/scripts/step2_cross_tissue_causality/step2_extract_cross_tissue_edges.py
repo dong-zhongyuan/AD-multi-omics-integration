@@ -1,4 +1,3 @@
-import os
 #!/usr/bin/env python3
 """
 Step 2: 提取跨组织因果边
@@ -23,21 +22,24 @@ import torch
 from tqdm import tqdm
 
 # 导入配置管理器
-PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT") or Path(__file__).resolve().parents[3])
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tools.config_loader import get_config
 config = get_config()
 
-# 添加 HepaWorld 到路径
-sys.path.insert(0, str(config.get_path("paths.hepaworld_dir")))
+# 添加 HepaWorld 到路径（自动适配 Windows）
+_HEPAWORLD = Path(str(config.get_path("paths.hepaworld_dir")))
+if not _HEPAWORLD.exists():
+    _HEPAWORLD = PROJECT_ROOT / "tools" / "hepaworld"
+sys.path.insert(0, str(_HEPAWORLD))
 from models.dynamics import DriftNet, integrate_ode
 
 # ============================================================================
 # 配置
 # ============================================================================
 
-PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT") or Path(__file__).resolve().parents[3])
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 OMICS_CONFIG = {
     'metabolomics': {
@@ -178,7 +180,19 @@ def load_model_and_data(omics_type):
     # 转为float32节省内存
     X_plasma = X_plasma.astype(np.float32)
     X_csf = X_csf.astype(np.float32)
-    
+
+    # 下采样以加速 Jacobian 计算（Jacobian 在分布均值处计算，2000 细胞足够）
+    MAX_JACOBIAN_SAMPLES = 2000
+    rng_ds = np.random.RandomState(42)
+    if X_plasma.shape[0] > MAX_JACOBIAN_SAMPLES:
+        idx = rng_ds.choice(X_plasma.shape[0], MAX_JACOBIAN_SAMPLES, replace=False)
+        X_plasma = X_plasma[idx]
+        print(f"  下采样 plasma: {MAX_JACOBIAN_SAMPLES} cells (from {adata_plasma.n_obs})")
+    if X_csf.shape[0] > MAX_JACOBIAN_SAMPLES:
+        idx = rng_ds.choice(X_csf.shape[0], MAX_JACOBIAN_SAMPLES, replace=False)
+        X_csf = X_csf[idx]
+        print(f"  下采样 CSF: {MAX_JACOBIAN_SAMPLES} cells (from {adata_csf.n_obs})")
+
     # 关闭backed文件
     adata_plasma.file.close()
     adata_csf.file.close()

@@ -40,7 +40,7 @@ import pandas as pd
 # 0) Gene list - Load from CSV file
 # -----------------------------
 # Default path: Use config_loader to get project paths
-sys.path.insert(0, '')
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from tools.config_loader import get_config
 config = get_config()
 
@@ -86,6 +86,10 @@ OPENTARGETS_GQL = "https://api.platform.opentargets.org/api/v4/graphql"
 DGIDB_GQL = "https://dgidb.org/api/graphql"
 CHEMBL_TARGET_SEARCH = "https://www.ebi.ac.uk/chembl/api/data/target/search.json"
 CHEMBL_DRUG_MECH = "https://www.ebi.ac.uk/chembl/api/data/drug_mechanism.json"
+# PubChem: 查靶点的已知药物（老药新用核心来源，覆盖已批准药）
+PUBCHEM_TARGET_GENE = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/gene/geneid/{}/assaysummary/JSON"
+# DrugBank 通过 go.drugbank.com 公开页查靶点
+DRUGBANK_TARGET = "https://go.drugbank.com/unearth/q?searcher=drugs&query=target:{}"
 
 
 # -----------------------------
@@ -202,8 +206,8 @@ def parse_args_safely(argv: List[str]) -> argparse.Namespace:
     We must ignore unknown args to avoid SystemExit.
     """
     ap = argparse.ArgumentParser(add_help=not is_notebook())
-    ap.add_argument("--gene_list", type=str, default="", help="Path to gene list CSV (default: output/step5_gene_classification/therapeutic_targets.csv)")
-    ap.add_argument("--out_dir", type=str, default="", help="Output dir (default: ./output/step5_clinical_validation/drug_mining)")
+    ap.add_argument("--gene_list", type=str, default="", help="Path to gene list CSV")
+    ap.add_argument("--out_dir", type=str, default="", help="Output dir (default: auto from gene_list name)")
     ap.add_argument("--cache_dir", type=str, default="", help="Cache dir (default: ./drug_mining_cache)")
     ap.add_argument("--sleep", type=float, default=0.15, help="Sleep between requests")
     ap.add_argument("--max_genes", type=int, default=0, help="Limit gene count (0 = no limit)")
@@ -441,6 +445,20 @@ def opentargets_fetch(sess: requests.Session, cache_dir: Path, ensembl_id: str, 
             labels.append(str(lab))
     tract_score, tract_basis = _tract_score_from_labels(labels)
 
+    # AD 疾病关联评分
+    ad_score = 0.0
+    ad_genetic_score = 0.0
+    ad_disease_name = ""
+    assoc = tgt.get("associatedDiseases") or {}
+    for r in (assoc.get("rows") or []):
+        disease_name = (r.get("disease") or {}).get("name") or ""
+        if "alzheimer" in disease_name.lower():
+            ad_score = max(ad_score, float(r.get("score") or 0))
+            ad_disease_name = disease_name
+            for dt in (r.get("datatypeScores") or []):
+                if dt.get("id") == "genetic_association":
+                    ad_genetic_score = max(ad_genetic_score, float(dt.get("score") or 0))
+
     out = {
         "ensembl_id": ensembl_id,
         "found": True,
@@ -629,6 +647,60 @@ def log_norm(x: int, cap: int) -> float:
     return clamp01(math.log1p(x) / math.log1p(cap))
 
 
+# -----------------------------
+# 8.5) PubChem（老药新用核心来源）
+# -----------------------------
+def pubchem_fetch_drugs(sess: requests.Session, cache_dir: Path, entrez_id: str, sleep_s: float) -> Dict[str, Any]:
+    """查询 PubChem 的靶点活性数据，提取有活性化合物的药物名。
+    PubChem 覆盖面最广：包含已批准药、临床试验药、以及生物活性筛选命中的化合物。
+    """
+    if not entrez_id:
+        return {"found": False, "active_compounds_n": 0, "drug_names": [], "error": None}
+
+    ck = cache_dir / "pubchem" / cache_key("pc_gene", entrez_id)
+    cached = safe_read_json(ck)
+    if cached is not None:
+        return cached
+
+    try:
+        url = PUBCHEM_TARGET_GENE.format(entrez_id)
+        resp = request_with_retry(sess, "GET", url, timeout=30)
+        data = resp.json()
+
+        # 提取活性化合物
+        active_compounds = set()
+        assays = data.get("Table", {}).get("Row", [])
+
+        # PubChem assaysummary 返回活性化合物的汇总
+        for assay in assays:
+            cells = assay.get("Cell", [])
+            # 每行: [AID, Name, Activity Outcome, ...CID, Compound Name]
+            if len(cells) >= 5:
+                outcome = str(cells[2]).lower() if len(cells) > 2 else ""
+                if "active" in outcome:
+                    compound_name = str(cells[-1]) if cells[-1] else ""
+                    if compound_name and compound_name != "None":
+                        active_compounds.add(compound_name)
+
+        out = {
+            "found": len(active_compounds) > 0,
+            "active_compounds_n": len(active_compounds),
+            "drug_names": sorted(active_compounds)[:100],  # 限制前100个
+            "error": None,
+        }
+    except Exception as e:
+        out = {
+            "found": False,
+            "active_compounds_n": 0,
+            "drug_names": [],
+            "error": str(e),
+        }
+
+    safe_write_json(ck, out)
+    time.sleep(sleep_s)
+    return out
+
+
 def compute_drug_score(
     approved_drugs_n: int,
     max_phase: int,
@@ -636,26 +708,32 @@ def compute_drug_score(
     dgidb_unique_drugs_n: int,
     chembl_mechanisms_n: int,
     chembl_unique_molecules_n: int,
+    pubchem_active_n: int = 0,
 ) -> Tuple[float, Dict[str, float], str]:
     """
-    Teacher's Strategy: 50% Phase + 25% Structure + 25% Evidence
+    Scoring: 45% Phase + 20% Structure + 20% Evidence + 15% PubChem
+    PubChem 加权覆盖老药新用场景（已批准但非 AD 适应症的药物）。
     """
-    # 1. Phase Score (50%)
+    # 1. Phase Score (45%)
     phase_score = 1.0 if approved_drugs_n > 0 else clamp01((max_phase or 0) / 4.0)
-    
-    # 2. Tractability Score (25%)
+
+    # 2. Tractability Score (20%)
     tract = clamp01(float(tract_score or 0.0))
-    
-    # 3. Evidence Score (25%)
+
+    # 3. Evidence Score (20%): DGIdb + ChEMBL
     dgidb_score = log_norm(dgidb_unique_drugs_n, cap=30)
     chembl_score = max(log_norm(chembl_mechanisms_n, cap=30), log_norm(chembl_unique_molecules_n, cap=30))
 
+    # 4. PubChem Score (15%): 活性化合物数量（覆盖老药新用）
+    pubchem_score = log_norm(pubchem_active_n, cap=50)
+
     # Formula
     score = (
-        0.50 * phase_score +
-        0.25 * tract +
-        0.15 * dgidb_score +
-        0.10 * chembl_score
+        0.45 * phase_score +
+        0.20 * tract +
+        0.10 * dgidb_score +
+        0.10 * chembl_score +
+        0.15 * pubchem_score
     )
     score = clamp01(score)
 
@@ -678,6 +756,7 @@ def compute_drug_score(
         "tract_score": float(tract),
         "dgidb_score": float(dgidb_score),
         "chembl_score": float(chembl_score),
+        "pubchem_score": float(pubchem_score),
     }
     return score, parts, tier
 
@@ -690,19 +769,25 @@ def run():
     args = parse_args_safely(sys.argv[1:])
 
     # Output dirs: Use project-wide paths from config
-    project_root = Path(config.get_path("paths.project_root"))
-    output_base = Path(config.get_path("paths.output_dir"))
+    project_root = Path(__file__).resolve().parents[3]
+    output_base = project_root / "output"
     
-    out_dir = Path(args.out_dir).resolve() if args.out_dir else (output_base / "step5_clinical_validation/drug_mining")
+    # 自动根据来源生成独立子目录
+    if args.out_dir:
+        out_dir = Path(args.out_dir).resolve()
+    elif args.gene_list:
+        list_stem = Path(args.gene_list).stem
+        out_dir = output_base / "step5_clinical_validation" / f"drug_mining_{list_stem}"
+    else:
+        out_dir = output_base / "step5_clinical_validation" / "drug_mining_default"
     cache_dir = Path(args.cache_dir).resolve() if args.cache_dir else (output_base / "step5_clinical_validation/drug_mining_cache")
     out_dir.mkdir(parents=True, exist_ok=True)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load gene list from CSV
+    # 基因来源：从 CSV 读取
     gene_list_path = args.gene_list if args.gene_list else DEFAULT_GENE_LIST_PATH
     if not Path(gene_list_path).is_absolute():
         gene_list_path = str(project_root / gene_list_path)
-    
     print(f"[INFO] Loading gene list from: {gene_list_path}")
     genes = load_gene_list_from_csv(gene_list_path)
     if args.max_genes and args.max_genes > 0:
@@ -768,6 +853,10 @@ def run():
         uids = "|".join(h.get("uniprot_ids") or []) if isinstance(h.get("uniprot_ids"), list) else (h.get("uniprot_ids") or "")
         ch = chembl_fetch(sess, cache_dir, sym, uids, args.sleep)
 
+        # PubChem: 查活性化合物（老药新用核心来源）
+        entrez_id = h.get("entrez_id")
+        pc = pubchem_fetch_drugs(sess, cache_dir, str(entrez_id) if entrez_id else "", args.sleep)
+
         ion = ion_map.get(sym, {})
         rows.append({
             "symbol": sym,
@@ -806,6 +895,11 @@ def run():
             "chembl_mechanisms_n": int(ch.get("mechanisms_n", 0) or 0),
             "chembl_unique_molecules_n": int(ch.get("unique_molecules_n", 0) or 0),
             "chembl_molecule_names": "|".join(ch.get("molecule_names") or []),
+
+            # PubChem
+            "pubchem_found": bool(pc.get("found", False)),
+            "pubchem_active_n": int(pc.get("active_compounds_n", 0) or 0),
+            "pubchem_drug_names": "|".join(pc.get("drug_names") or []),
         })
 
     df = pd.DataFrame(rows)
@@ -827,7 +921,7 @@ def run():
         # Score + Tier
     # --- Modified to match Teacher's Logic unpacking ---
     scores, tiers = [], []
-    sp, st, sd, sc = [], [], [], []
+    sp, st, sd, sc, spc = [], [], [], [], []
 
     for _, r in df.iterrows():
         score, parts, tier = compute_drug_score(
@@ -837,15 +931,16 @@ def run():
             dgidb_unique_drugs_n=int(r.get("dgidb_unique_drugs_n") or 0),
             chembl_mechanisms_n=int(r.get("chembl_mechanisms_n") or 0),
             chembl_unique_molecules_n=int(r.get("chembl_unique_molecules_n") or 0),
+            pubchem_active_n=int(r.get("pubchem_active_n") or 0),
         )
         scores.append(score)
         tiers.append(tier)
-        
-        # Unpack the 4 parts
+
         sp.append(parts["phase_score"])
         st.append(parts["tract_score"])
         sd.append(parts["dgidb_score"])
         sc.append(parts["chembl_score"])
+        spc.append(parts.get("pubchem_score", 0.0))
 
     # 写入 DataFrame
     df["DrugEvidenceScore"] = scores
@@ -854,18 +949,20 @@ def run():
     df["score_tractability"] = st
     df["score_dgidb"] = sd
     df["score_chembl"] = sc
+    df["score_pubchem"] = spc
     # Ranked
     ranked = df.sort_values(
         by=[
             "ot_approved_drugs_n",
             "ot_max_phase",
             "DrugEvidenceScore",
+            "pubchem_active_n",
             "ot_tract_score",
             "dgidb_unique_drugs_n",
             "chembl_mechanisms_n",
             "is_real_ion_channel",  # tie-breaker only; does not inflate score
         ],
-        ascending=[False, False, False, False, False, False, False]
+        ascending=[False, False, False, False, False, False, False, False]
     ).reset_index(drop=True)
     ranked["rank"] = range(1, len(ranked) + 1)
 
@@ -895,7 +992,7 @@ def run():
     print(f"  - {out_dir / 'drug_mining_summary.json'}")
 
     print("\n[TOP 15]")
-    show_cols = ["rank", "symbol", "TargetTier", "DrugEvidenceScore", "ot_approved_drugs_n", "ot_max_phase", "ot_tract_score"]
+    show_cols = ["rank", "symbol", "TargetTier", "DrugEvidenceScore", "ot_approved_drugs_n", "ot_max_phase", "pubchem_active_n", "ot_tract_score"]
     if "is_real_ion_channel" in ranked.columns:
         show_cols += ["is_real_ion_channel", "ion_group_hits"]
     print(ranked.head(15)[show_cols].to_string(index=False))

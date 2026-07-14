@@ -1,4 +1,3 @@
-import os
 #!/usr/bin/env python3
 """
 不重跑 step4 的血浆诊断 panel 评估
@@ -27,7 +26,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 
-PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT") or Path(__file__).resolve().parents[4])
+import os
+PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT") or Path(__file__).resolve().parents[3])
 OUTPUT_DIR = PROJECT_ROOT / "output" / "step5_diagnostic_performance"
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -68,35 +68,43 @@ def load_subject_level_plasma() -> pd.DataFrame:
 
 
 def get_step5_gene_sets() -> dict[str, list[str]]:
-    verified_df = pd.read_csv(PROJECT_ROOT / "output" / "verified_cross_tissue_edges.csv")
-    diagnostic_df = pd.read_csv(PROJECT_ROOT / "output" / "step5_gene_classification" / "diagnostic_targets.csv")
+    # 直接从 Step3 提取基因（不依赖 VK verified_cross_tissue_edges.csv）
+    # 蛋白组 Hub 基因 + filtered edges 的所有基因
+    edges_file = PROJECT_ROOT / "output" / "step3_hub_identification" / "eigengene_analysis" / "proteomics" / "filtered_cross_tissue_edges.csv"
+    edges = pd.read_csv(edges_file)
 
-    strict_forward = (
-        diagnostic_df.loc[diagnostic_df["omics"] == "proteomics", "gene"]
-        .dropna()
-        .astype(str)
-        .drop_duplicates()
-        .tolist()
-    )
+    # 清洗蛋白名 → gene symbol
+    def clean_name(name):
+        name = str(name).upper()
+        if name.startswith("BD-"):
+            name = name[3:]
+        if name.startswith("PTAU") or "PTAU" in name:
+            return "MAPT"
+        if name.startswith("ABETA") or name.startswith("Aβ"):
+            return "APP"
+        return name
 
-    verified_proteomics = sorted(
-        set(
-            verified_df.loc[verified_df["omics"] == "proteomics", "source"].dropna().astype(str)
-        ).union(
-            set(verified_df.loc[verified_df["omics"] == "proteomics", "target"].dropna().astype(str))
+    brain_genes = sorted(set(edges["source"].apply(clean_name)))
+    blood_genes = sorted(set(edges["target"].apply(clean_name)))
+    all_proteomics = sorted(set(brain_genes) | set(blood_genes))
+
+    # 同时加载 hub_cross_tissue_edges 构建更大的 network-guided pool
+    hub_edges_file = PROJECT_ROOT / "output" / "step3_hub_identification" / "proteomics" / "hub_cross_tissue_edges.csv"
+    if hub_edges_file.exists():
+        hub_edges = pd.read_csv(hub_edges_file)
+        hub_genes = sorted(
+            set(hub_edges["source"].apply(clean_name)) |
+            set(hub_edges["target"].apply(clean_name))
         )
-    )
+        network_guided = sorted(set(all_proteomics) | set(hub_genes))
+    else:
+        network_guided = all_proteomics
 
-    edges = pd.read_csv(PROJECT_ROOT / "output" / "step3_hub_identification" / "proteomics" / "hub_cross_tissue_edges.csv")
-    seed_genes = set(verified_proteomics)
-    network_neighbors = set()
-    for _, row in edges.iterrows():
-        src = str(row["source"])
-        tgt = str(row["target"])
-        if src in seed_genes or tgt in seed_genes:
-            network_neighbors.add(src)
-            network_neighbors.add(tgt)
-    network_guided = sorted(seed_genes.union(network_neighbors))
+    # verified_proteomics = 脑端 Hub 基因（做 fixed panel）
+    verified_proteomics = brain_genes
+
+    # strict_forward = 血端疾病相关基因
+    strict_forward = blood_genes
 
     return {
         "strict_forward": strict_forward,
@@ -257,6 +265,51 @@ def main() -> None:
     print("=" * 80)
     print(summary_df[["panel", "mode", "cv_auc_mean", "cv_auc_sd", "n_subjects"]].to_string(index=False))
     print(f"\n结果已保存到: {summary_file}")
+
+    # ================================================================
+    # 单个基因诊断效力（单变量 AUC）
+    # ================================================================
+    print("\n" + "=" * 80)
+    print("单个基因诊断效力")
+    print("=" * 80)
+
+    from sklearn.metrics import roc_auc_score
+
+    all_panel_genes = sorted(set(
+        gene_sets["network_guided_pool"] +
+        gene_sets["verified_proteomics"] +
+        gene_sets["strict_forward"]
+    ))
+    # 去掉非蛋白名
+    all_panel_genes = [g for g in all_panel_genes if g in df.columns]
+
+    single_results = []
+    for gene in all_panel_genes:
+        vals = df[["diagnosis", gene]].dropna()
+        if len(vals) < 50:
+            continue
+        y = vals["diagnosis"].values
+        x = vals[gene].values
+        # AUC（取 max(AUC, 1-AUC) 因为方向不确定）
+        try:
+            auc = roc_auc_score(y, x)
+            auc = max(auc, 1 - auc)
+        except Exception:
+            continue
+        # 方向：正相关=风险（高值→AD），负相关=保护
+        direction = "risk" if roc_auc_score(y, x) > 0.5 else "protective"
+        single_results.append({
+            "gene": gene,
+            "single_auc": round(auc, 4),
+            "direction": direction,
+            "n": len(vals),
+        })
+
+    single_df = pd.DataFrame(single_results).sort_values("single_auc", ascending=False)
+    single_df.to_csv(OUTPUT_DIR / "single_gene_auc.csv", index=False)
+
+    print(single_df.to_string(index=False))
+    print(f"\n保存: {OUTPUT_DIR / 'single_gene_auc.csv'}")
 
 
 if __name__ == "__main__":

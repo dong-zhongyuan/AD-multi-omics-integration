@@ -22,7 +22,7 @@ cat("=" , rep("=", 69), "\n", sep="")
 # ============================================================================
 # 配置
 # ============================================================================
-PROJECT_ROOT <- ""
+PROJECT_ROOT <- "."
 DATA_DIR <- file.path(PROJECT_ROOT, "data/external-validation/GSE226602")
 OUTPUT_DIR <- file.path(PROJECT_ROOT, "output/step6_external_validation")
 RESULTS_DIR <- file.path(OUTPUT_DIR, "results")

@@ -1,4 +1,3 @@
-import os
 #!/usr/bin/env python3
 """
 差异表达一致性分析：验证iNPH DEG能否代表AD DEG
@@ -27,7 +26,7 @@ import gzip
 import warnings
 warnings.filterwarnings('ignore')
 
-PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT") or Path(__file__).resolve().parents[3])
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = PROJECT_ROOT / "output/step6_external_validation/deg_consistency"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 

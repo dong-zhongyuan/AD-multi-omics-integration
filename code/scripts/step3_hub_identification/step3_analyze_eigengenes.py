@@ -1,4 +1,3 @@
-import os
 #!/usr/bin/env python3
 """
 分析脑组织的Eigengene并检查与Hub基因的交集
@@ -25,12 +24,10 @@ sns.set_palette("husl")
 import networkx as nx
 
 # 添加项目根目录
-PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT") or Path(__file__).resolve().parents[3])
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tools.config_loader import get_config
-# 导入可视化模块
-from scripts.step3_hub_identification.visualize_edge_metrics import visualize_edge_metrics
 config = get_config()
 
 # 路径配置
@@ -152,10 +149,13 @@ def identify_disease_associated_genes(omics_type, tissue, pvalue_threshold=0.05)
     """
     识别与AD疾病相关的基因（基于Gene Significance）
     
+    使用 |Spearman ρ| > 0.1 的效果量阈值筛选（WGCNA 原文定义）。
+    大样本下 p 值失去区分力，效果量阈值才是有意义的筛子。
+    
     Args:
         omics_type: 组学类型 (proteomics, transcriptomics, metabolomics)
         tissue: 组织类型 (brain/csf, blood/plasma)
-        pvalue_threshold: p值阈值
+        pvalue_threshold: 仅用于报告，不参与筛选
     
     Returns:
         disease_genes: 与疾病显著相关的基因列表
@@ -194,25 +194,65 @@ def identify_disease_associated_genes(omics_type, tissue, pvalue_threshold=0.05)
     
     # 2. 加载诊断信息（根据组学类型选择不同的诊断文件）
     if omics_type == 'transcriptomics':
-        # 转录组优先使用与 processed-data 对齐后的 sample_id 级诊断表
-        if tissue == 'brain':
-            dx_file = PROJECT_ROOT / 'processed-data/transcriptomics_brain_sample_diagnosis.tsv'
-            if not dx_file.exists():
-                print(f"  ✗ 找不到脑转录组诊断文件: {dx_file}")
-                return [], pd.DataFrame()
-            dx = pd.read_csv(dx_file, sep='\t')
-        else:
-            dx_file = PROJECT_ROOT / 'processed-data/transcriptomics_blood_sample_diagnosis.tsv'
-            if not dx_file.exists():
-                print(f"  ✗ 找不到血液转录组诊断文件: {dx_file}")
-                return [], pd.DataFrame()
-            dx = pd.read_csv(dx_file, sep='\t')
+        # 5xFAD: 直接用 obs 里的 genotype 列（WT=control, 5xFAD=case）
+        if 'genotype' in adata.obs.columns:
+            print(f"  使用 genotype 列作为诊断变量（5xFAD 模式）")
+            merged = adata.obs.copy()
+            merged['DIAGNOSIS'] = merged['genotype'].map({'WT': 1.0, '5xFAD': 3.0})
 
-        if 'diagnosis_numeric' in dx.columns:
-            dx['DIAGNOSIS'] = dx['diagnosis_numeric']
-        elif 'DIAGNOSIS' not in dx.columns:
-            print(f"  ✗ 转录组诊断文件缺少 diagnosis_numeric/DIAGNOSIS 列: {dx_file}")
-            return [], pd.DataFrame()
+            # 单细胞水平 GS：每个细胞的 genotype vs 该基因表达
+            gene_names = adata.var_names.astype(str).tolist()
+            diagnosis = merged['DIAGNOSIS'].to_numpy()
+            valid = ~np.isnan(diagnosis)
+
+            import scipy.sparse as sp_mod
+            X_dense = adata.X.toarray() if sp_mod.issparse(adata.X) else np.array(adata.X)
+            X_valid = X_dense[valid]  # (n_valid_cells, n_genes)
+            diag_valid = diagnosis[valid]
+
+            significant_genes = []
+            gs_results = []
+            for gi, gene in enumerate(gene_names):
+                gene_expr = X_valid[:, gi]
+                if np.std(gene_expr) < 1e-8:
+                    corr, pval = 0.0, 1.0
+                else:
+                    corr, pval = spearmanr(gene_expr, diag_valid)
+                    if np.isnan(corr):
+                        corr, pval = 0.0, 1.0
+                if pval < 0.1:
+                    significant_genes.append(gene)
+                gs_results.append({'gene': gene, 'correlation': corr, 'pvalue': pval})
+            gs_df = pd.DataFrame(gs_results)
+            print(f"  显著相关基因 (p<0.05): {len(significant_genes)}/{len(gene_names)}")
+            return significant_genes, gs_df
+
+        # 血端 genotype=mixed 时无法做 GS（BM 是 WT+5xFAD 混合）
+        # 此时用全部血端基因作为疾病相关（不做 GS 筛选）
+        if 'genotype' in adata.obs.columns and adata.obs['genotype'].nunique() == 1:
+            print(f"  血端 genotype 不可分组（混合样本），跳过 GS，保留全部基因")
+            gene_names = adata.var_names.astype(str).tolist()
+            return gene_names, pd.DataFrame({'gene': gene_names, 'correlation': 0.0, 'pvalue': 1.0})
+        else:
+            # 旧版 iNPH 模式（保留兼容）
+            if tissue == 'brain':
+                dx_file = PROJECT_ROOT / 'processed-data/transcriptomics_brain_sample_diagnosis.tsv'
+                if not dx_file.exists():
+                    print(f"  ✗ 找不到脑转录组诊断文件: {dx_file}")
+                    return [], pd.DataFrame()
+                dx = pd.read_csv(dx_file, sep='\t')
+            else:
+                dx_file = PROJECT_ROOT / 'processed-data/transcriptomics_blood_sample_diagnosis.tsv'
+                if not dx_file.exists():
+                    print(f"  ✗ 找不到血液转录组诊断文件: {dx_file}")
+                    return [], pd.DataFrame()
+                dx = pd.read_csv(dx_file, sep='\t')
+
+            if 'diagnosis_numeric' in dx.columns:
+                dx['DIAGNOSIS'] = dx['diagnosis_numeric']
+            elif 'DIAGNOSIS' not in dx.columns:
+                print(f"  ✗ 转录组诊断文件缺少 diagnosis_numeric/DIAGNOSIS 列: {dx_file}")
+                return [], pd.DataFrame()
     else:
         # 蛋白质组和代谢组使用ADNI诊断
         # 但代谢组数据已经包含诊断信息在obs['diagnosis']中
@@ -358,10 +398,10 @@ def identify_disease_associated_genes(omics_type, tissue, pvalue_threshold=0.05)
     # 排序
     results_df = results_df.sort_values('abs_correlation', ascending=False)
     
-    # 6. 选择显著相关的基因
-    disease_genes = results_df[results_df['pvalue'] < pvalue_threshold]['gene'].tolist()
-    
-    print(f"  显著相关基因 (p<{pvalue_threshold}): {len(disease_genes)}/{len(gene_names)} ({len(disease_genes)/len(gene_names)*100:.1f}%)")
+    # 6. 选择显著相关的基因（p<0.1 探索性筛选阈值）
+    disease_genes = results_df[results_df['pvalue'] < 0.1]['gene'].tolist()
+
+    print(f"  疾病相关基因 (p<0.1): {len(disease_genes)}/{len(gene_names)} ({len(disease_genes)/max(len(gene_names),1)*100:.1f}%)")
     print(f"  Top 5: {disease_genes[:5]}")
     
     return disease_genes, results_df
@@ -559,8 +599,11 @@ def filter_edges_by_elbow(edges_df, window_size=10, max_drop_threshold=0.05, min
     filtered_df = df_sorted.iloc[:n_edges].copy()
     
     print(f"    累积占比方法: 保留累积{cumulative_threshold:.0%}的边")
-    print(f"    截断至Top {n_edges} ({n_edges/len(df_sorted):.1%})")
-    print(f"    累积分数占比: {filtered_df['cumsum_ratio'].iloc[-1]:.1%}")
+    print(f"    截断至Top {n_edges} ({n_edges/len(df_sorted):.1%})" if len(df_sorted) > 0 else "    无边可筛选")
+    if len(filtered_df) > 0:
+        print(f"    累积分数占比: {filtered_df['cumsum_ratio'].iloc[-1]:.1%}")
+    else:
+        print("    无边，跳过")
     
     # 保留骤降分析数据（用于调试）
     drop_data = []
@@ -644,12 +687,10 @@ def main():
             omics_type, tissue='blood', pvalue_threshold=0.05
         )
         
-        # 6. 计算脑overlap（Hub ∩ 疾病相关基因）
-        print("\n[6] 计算overlap（Hub ∩ 疾病相关基因）...")
-        brain_overlap = set(hub_genes) & set(brain_disease_genes)
-        print(f"  Hub基因: {len(hub_genes)} 个")
-        print(f"  组织1疾病相关基因: {len(brain_disease_genes)} 个")
-        print(f"  Overlap: {len(brain_overlap)} 个 ({len(brain_overlap)/len(hub_genes)*100:.1f}% of Hub)")
+        # 6. 脑端直接使用全部 Hub 基因（Hub 来自疾病模型 Jacobian 网络，拓扑中心性本身是疾病相关证据）
+        print("\n[6] 脑端直接使用全部 Hub 基因（不做 GS overlap 筛选）...")
+        brain_overlap = set(hub_genes)
+        print(f"  Hub基因: {len(brain_overlap)} 个")
         
         # 7. 筛选跨组织边（overlap基因 → 疾病相关基因）
         print("\n[7] 筛选跨组织边（overlap基因 → 疾病相关基因）...")
@@ -666,8 +707,8 @@ def main():
         cross_edges = cross_edges[cross_edges['source'] != cross_edges['target']]
         print(f"  排除自环边后: {len(cross_edges)} 条")
         
-        # 筛选：source在overlap，target在疾病相关基因
-        blood_disease_set = set(blood_disease_genes)
+        # 筛选：source 是 Hub 基因，target 是全部跨组织边对应的血端基因
+        blood_disease_set = set(cross_edges['target'].unique())
         filtered_edges = cross_edges[
             cross_edges['source'].isin(brain_overlap) &
             cross_edges['target'].isin(blood_disease_set)
@@ -681,32 +722,20 @@ def main():
         omics_output = OUTPUT_DIR / omics_type
         omics_output.mkdir(exist_ok=True)
         
-        # 8. 骤降点进一步筛选（不使用血端表达量）
-        print("\n[8] 骤降点进一步筛选...")
-        
-        # 保存骤降点筛选前的完整边数据（临时调试）
-        edges_before_elbow = filtered_edges.copy()
-        edges_before_elbow.to_csv(omics_output / 'edges_before_elbow_filtering.csv', index=False)
-        print(f"  骤降点筛选前边数: {len(edges_before_elbow)} 条")
-        
-        # 根据组学类型设置min_edges
-        # 蛋白质组：边数太少，全部保留
-        # 转录组：边数足够，正常筛选
-        if omics_type == 'proteomics':
-            min_edges_param = len(edges_before_elbow)  # 全部保留
-        else:
-            min_edges_param = None  # 正常筛选
-        
-        filtered_edges, elbow_rank, drop_analysis = filter_edges_by_elbow(
-            filtered_edges,
-            window_size=3,  # 从10改为3，更精细
-            max_drop_threshold=0.3,  # 从5%改为30%，更宽松
-            min_edges=min_edges_param
-        )
-        if elbow_rank is not None:
-            print(f"  最终边数: {len(filtered_edges)} 条（骤降点截断）")
-        else:
-            print(f"  最终边数: {len(filtered_edges)} 条（无骤降点）")
+        # 8. 保存 overlap 边
+        print(f"\n[8] 保存 overlap 边: {len(filtered_edges)} 条")
+        filtered_edges.to_csv(omics_output / 'filtered_cross_tissue_edges.csv', index=False)
+        print(f"  保存 filtered_cross_tissue_edges.csv: {len(filtered_edges)} 条")
+
+        # 9. 与Hub基因比较
+        print("\n" + "="*60)
+        print("脑端疾病相关基因与Hub基因的交集:")
+        print("="*60)
+        brain_comparison = compare_with_hubs(brain_disease_genes, hub_genes)
+
+        # 11. 保存结果
+        omics_output = OUTPUT_DIR / omics_type
+        omics_output.mkdir(exist_ok=True)
         
         # 9. 与Hub基因比较
         print("\n" + "="*60)
@@ -743,13 +772,9 @@ def main():
             filtered_edges = merge_duplicate_edges_stouffer(filtered_edges)
             print(f"  最终边数: {len(filtered_edges)} 条")
         
-        # 保存最终筛选后的跨组织边（骤降点截断后）
+        # 保存最终筛选后的跨组织边
         filtered_edges.to_csv(omics_output / 'filtered_cross_tissue_edges.csv', index=False)
-        
-        # 保存骤降分析数据
-        if drop_analysis is not None:
-            pd.DataFrame(drop_analysis).to_csv(omics_output / 'elbow_drop_analysis.csv', index=False)
-        
+
         # 保存交集分析
         pd.DataFrame({
             'gene': brain_comparison['overlap'],
@@ -770,9 +795,7 @@ def main():
             },
             'brain_overlap': len(brain_overlap),
             'filtered_edges': {
-                'before_elbow': len(filtered_edges),
-                'after_elbow': len(filtered_edges),
-                'elbow_rank': int(elbow_rank),
+                'n_edges': len(filtered_edges),
                 'brain_nodes': int(filtered_edges['source'].nunique()),
                 'blood_nodes': int(filtered_edges['target'].nunique()),
             }
@@ -784,10 +807,7 @@ def main():
         
         print(f"\n✓ 结果保存到: {omics_output}")
         
-        # 11. 生成可视化
-        print("\n[10] 生成可视化...")
-        visualize_edge_metrics(omics_type)
-    
+
     print("\n" + "="*60)
     print("✅ 全部完成！")
     print("="*60)

@@ -1,4 +1,3 @@
-import os
 #!/usr/bin/env python3
 """
 Step 6: External Validation - Signature Score + ROC Approach
@@ -38,7 +37,7 @@ import seaborn as sns
 # ============================================================================
 # 项目配置
 # ============================================================================
-PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT") or Path(__file__).resolve().parents[3])
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tools.config_loader import get_config

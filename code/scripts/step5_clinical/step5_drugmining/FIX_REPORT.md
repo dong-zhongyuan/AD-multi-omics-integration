@@ -52,8 +52,13 @@ cache_dir = base_dir / "drug_mining_cache"
 
 #### 修复后:
 ```python
-# 使用项目配置管理器
-sys.path.insert(0, '')
+# 使用项目配置管理器（自动定位项目根目录，不依赖绝对路径）
+import os, sys
+_ROOT = os.path.abspath(os.getcwd())
+for _c in [_ROOT, os.path.dirname(_ROOT), os.path.dirname(os.path.dirname(_ROOT))]:
+    if os.path.isdir(os.path.join(_c, 'code')):
+        _ROOT = _c; break
+sys.path.insert(0, _ROOT)
 from tools.config_loader import get_config
 config = get_config()
 

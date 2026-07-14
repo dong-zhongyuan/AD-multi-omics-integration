@@ -1,37 +1,35 @@
 # AD多组学项目配置文件
 # 生成时间: 2026-05-07
 # 用途: 统一管理所有硬编码的路径、基因名称、参数等
-# 复现包说明：所有路径已相对化。如需自定义，设置环境变量 PROJECT_ROOT 或 DATA_ROOT。
-#   参考 docs/DATA_AND_CODE.md 获取数据下载说明。
 
 # ============================================================================
-# 1. 路径配置（相对路径，相对于 config/ 目录）
+# 1. 路径配置
 # ============================================================================
 paths:
-  # 项目根目录 (replication package root)
-  project_root: "../"
-
-  # 数据目录 (download datasets separately; see docs/DATA_AND_CODE.md)
-  data_dir: "../data"
-  raw_data_dir: "../data/brain-or-csf-raw"
-  single_cell_dir: "../data/single-cell"
-  survival_dir: "../data/survival"
-
+  # 项目根目录
+  project_root: "."
+  
+  # 数据目录
+  data_dir: "${project_root}/data"
+  raw_data_dir: "${data_dir}/brain-or-csf-raw"
+  single_cell_dir: "${data_dir}/single-cell"
+  survival_dir: "${data_dir}/survival"
+  
   # 输出目录
-  output_dir: "../output"
-  processed_data_dir: "../processed-data"
-  logs_dir: "../logs"
-
+  output_dir: "${project_root}/output"
+  processed_data_dir: "${project_root}/processed-data"
+  logs_dir: "${project_root}/logs"
+  
   # 工具目录
-  tools_dir: "../code/tools"
-  hepaworld_dir: "../code/tools/hepaworld"
-
+  tools_dir: "${project_root}/tools"
+  hepaworld_dir: "${tools_dir}/hepaworld"
+  
   # 步骤输出目录
-  step1_output: "../output/step1_world_model_transcriptomics_no_pca"
-  step2_output: "../output/step2_cross_tissue_causality"
-  step3_output: "../output/step3_hub_identification"
-  step4_output: "../output/step4_virtual_knockout"
-  step5_output: "../output/step5_clinical_validation"
+  step1_output: "${output_dir}/step1_world_model_transcriptomics_no_pca"
+  step2_output: "${output_dir}/step2_cross_tissue_causality"
+  step3_output: "${output_dir}/step3_hub_identification"
+  step4_output: "${output_dir}/step4_virtual_knockout"
+  step5_output: "${output_dir}/step5_clinical_validation"
 
 # ============================================================================
 # 2. 候选基因配置
@@ -135,8 +133,8 @@ parameters:
       n_comp: 3
       out_channels: 2
       epochs: 100
-      learning_rate: 1e-7
-      weight_decay: 1e-9
+      learning_rate: 1e-3
+      weight_decay: 1e-4
       beta: 1.0
       q_threshold: 0.85
       n_permutations: 20

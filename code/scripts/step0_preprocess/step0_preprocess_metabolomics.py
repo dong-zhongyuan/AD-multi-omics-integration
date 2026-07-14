@@ -1,4 +1,3 @@
-import os
 #!/usr/bin/env python3
 """
 Step 0.3: 代谢组数据预处理 (HVG + PCA 降维版)
@@ -15,7 +14,7 @@ import pickle
 import sys
 
 # 导入配置管理器
-PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT") or Path(__file__).resolve().parents[3])
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tools.config_loader import get_config

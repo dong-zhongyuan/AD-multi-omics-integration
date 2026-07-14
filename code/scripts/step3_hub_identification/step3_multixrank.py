@@ -1,4 +1,3 @@
-import os
 #!/usr/bin/env python3
 """
 Step 3: Hub识别 - 使用 MultiXrank 多层网络随机游走
@@ -16,7 +15,7 @@ import json
 import sys
 
 # 添加项目根目录到路径
-PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT") or Path(__file__).resolve().parents[3])
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # 添加 multixrank 到路径
@@ -31,11 +30,11 @@ try:
     print("✓ MultiXrank 已加载")
 except ImportError as e:
     print(f"✗ MultiXrank 加载失败: {e}")
-    print("请检查路径: ./tools/multixrank")
+    print("请检查路径: str(Path(__file__).resolve().parents[2])/tools/multixrank")
     sys.exit(1)
 
 # 配置
-PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT") or Path(__file__).resolve().parents[3])
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STEP2_DIR = PROJECT_ROOT / "output/step2_cross_tissue_causality"
 OUTPUT_DIR = PROJECT_ROOT / "output/step3_hub_identification"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

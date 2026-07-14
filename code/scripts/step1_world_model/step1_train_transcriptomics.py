@@ -1,4 +1,3 @@
-import os
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -16,6 +15,7 @@ from __future__ import annotations
 
 import gc
 import json
+import os
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -26,8 +26,14 @@ import numpy as np
 import torch
 import scipy.sparse as sp
 
-# 添加项目根目录到路径
-PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT") or Path(__file__).resolve().parents[3])
+# CPU 多线程加速（16核全开）
+torch.set_num_threads(min(16, os.cpu_count() or 4))
+torch.set_num_interop_threads(4)
+
+# 添加项目根目录到路径（自动适配 WSL / Windows）
+_win_root = Path(__file__).resolve().parents[2]
+_wsl_root = Path(str(PROJECT_ROOT))
+PROJECT_ROOT = _wsl_root if _wsl_root.exists() and _wsl_root.is_dir() and str(_wsl_root.resolve()).startswith('/mnt/') else _win_root
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # 导入配置管理器
@@ -35,7 +41,10 @@ from tools.config_loader import get_config
 config = get_config()
 
 # 添加 HepaWorld 到路径
-sys.path.insert(0, str(config.get_path("paths.hepaworld_dir")))
+_HEPAWORLD = Path(str(config.get_path("paths.hepaworld_dir")))
+if not _HEPAWORLD.exists():
+    _HEPAWORLD = PROJECT_ROOT / "tools" / "hepaworld"
+sys.path.insert(0, str(_HEPAWORLD))
 
 from models.dynamics import DriftNet, integrate_ode
 from utils.seed import set_global_seed
@@ -52,15 +61,24 @@ def _dense_backed_slice(X, row_idx):
 # 配置
 # ============================================================================
 
+def _fix_path(p):
+    """config 返回的 /mnt/d/ 路径在 Windows 下不可用，转成 PROJECT_ROOT 相对路径。"""
+    s = str(p).replace("\\", "/")
+    if "." in s:
+        rel = s.split(".", 1)[1]
+        return str(PROJECT_ROOT / rel.lstrip("/"))
+    return s
+
+
 @dataclass
 class Step1Config:
     """Step 1 配置（改编自 Step4Config）"""
-    
-    # 路径
-    root: str = str(config.get_path("paths.project_root"))
-    plasma_h5ad: str = str(config.get_path("paths.processed_data_dir")) + "/transcriptomics_blood.h5ad"
-    csf_h5ad: str = str(config.get_path("paths.processed_data_dir")) + "/transcriptomics_brain.h5ad"
-    out_dir: str = str(config.get_path("paths.output_dir")) + "/step1_world_model_transcriptomics_no_pca"
+
+    # 路径（_fix_path 确保 Windows 下也能用）
+    root: str = str(PROJECT_ROOT)
+    plasma_h5ad: str = str(PROJECT_ROOT / "processed-data" / "transcriptomics_blood.h5ad")
+    csf_h5ad: str = str(PROJECT_ROOT / "processed-data" / "transcriptomics_brain.h5ad")
+    out_dir: str = str(PROJECT_ROOT / "output" / "step1_world_model_transcriptomics_no_pca")
     
     # 数据预处理（直接用原始基因表达，不做 PCA 降维）
     # gene_dim 将在运行时动态设置为共同基因数
@@ -155,10 +173,9 @@ def evaluate_epoch(
 ) -> Dict[str, float]:
     """计算验证集上的 OT loss + drift regularization（流式处理）"""
     model.eval()
-    
+
     with torch.no_grad():
-        # 从backed模式读取验证集数据
-        # h5py要求行索引也必须递增，先排序再读取
+        # 验证集已经是 batch_size 大小，直接使用
         plasma_sorted_order = np.argsort(plasma_val_idx)
         plasma_val_idx_sorted = plasma_val_idx[plasma_sorted_order]
         
@@ -403,28 +420,23 @@ def train_step1(cfg: Step1Config) -> None:
     )
     
     # ========================================================================
-    # 3. 划分训练集和验证集（只保存索引，不加载数据）
+    # 3. 划分训练集和验证集
     # ========================================================================
-    print("\n[SPLIT] 划分训练集和验证集（不配对模式）...")
-    
+    n_val = cfg.batch_size  # 验证集大小 = batch_size（与训练 loss 可比）
+    print(f"\n[SPLIT] Blood (Bone Marrow): {adata_plasma.n_obs} cells → 训练 {adata_plasma.n_obs - n_val} / 验证 {n_val}")
+    print(f"[SPLIT] Brain: {adata_csf.n_obs} cells → 训练 {adata_csf.n_obs - n_val} / 验证 {n_val}")
+
     rng = np.random.RandomState(cfg.seed + 1)
-    
-    # 血液样本划分（只保存索引）
-    n_plasma = adata_plasma.n_obs
-    n_plasma_train = int(n_plasma * (1 - cfg.val_frac))
-    plasma_indices = rng.permutation(n_plasma)
-    plasma_train_idx = plasma_indices[:n_plasma_train]
-    plasma_val_idx = plasma_indices[n_plasma_train:]
-    
-    # 脑样本划分（只保存索引）
-    n_csf = adata_csf.n_obs
-    n_csf_train = int(n_csf * (1 - cfg.val_frac))
-    csf_indices = rng.permutation(n_csf)
-    csf_train_idx = csf_indices[:n_csf_train]
-    csf_val_idx = csf_indices[n_csf_train:]
-    
-    print(f"[SPLIT] 血液 - 训练集: {len(plasma_train_idx)} 样本, 验证集: {len(plasma_val_idx)} 样本")
-    print(f"[SPLIT] 脑   - 训练集: {len(csf_train_idx)} 样本, 验证集: {len(csf_val_idx)} 样本")
+
+    # Blood 划分
+    plasma_indices = rng.permutation(adata_plasma.n_obs)
+    plasma_val_idx = np.sort(plasma_indices[:n_val])
+    plasma_train_idx = np.sort(plasma_indices[n_val:])
+
+    # Brain 划分
+    csf_indices = rng.permutation(adata_csf.n_obs)
+    csf_val_idx = np.sort(csf_indices[:n_val])
+    csf_train_idx = np.sort(csf_indices[n_val:])
     
     # ========================================================================
     # 4. 构建模型和优化器
@@ -561,12 +573,12 @@ def train_step1(cfg: Step1Config) -> None:
         train_reg = float(np.mean(train_reg_losses))
         train_total = train_ot + cfg.loss_reg_drift * train_reg
         
-        # 验证
+        # 验证（每个epoch都验证）
         val_metrics = evaluate_epoch(
-            model, 
-            adata_plasma, 
+            model,
+            adata_plasma,
             adata_csf,
-            plasma_val_idx, 
+            plasma_val_idx,
             csf_val_idx,
             plasma_gene_indices,
             csf_gene_indices,
@@ -574,7 +586,7 @@ def train_step1(cfg: Step1Config) -> None:
             X_plasma_std,
             X_csf_mean,
             X_csf_std,
-            cfg, 
+            cfg,
             device
         )
         val_total = val_metrics["val_total"]
@@ -590,8 +602,8 @@ def train_step1(cfg: Step1Config) -> None:
                 f"{val_total:.6f},{val_ot:.6f},{val_reg:.6f},{sec:.2f}\n"
             )
         
-        # 打印进度
-        if epoch % 10 == 0 or epoch == 1:
+        # 打印进度（每个 epoch 都输出）
+        if True:
             print(
                 f"[EPOCH {epoch:03d}] "
                 f"train_total={train_total:.4f} (ot={train_ot:.4f}, reg={train_reg:.4f}) "
@@ -614,8 +626,7 @@ def train_step1(cfg: Step1Config) -> None:
                 },
                 best_path,
             )
-            if epoch % 10 == 0:
-                print(f"[CKPT] 新的最佳模型 at epoch {epoch}, val_total={best_val:.4f}")
+            print(f"[CKPT] 新的最佳模型 at epoch {epoch}, val_total={best_val:.4f}")
         else:
             no_improve += 1
             if no_improve >= patience:

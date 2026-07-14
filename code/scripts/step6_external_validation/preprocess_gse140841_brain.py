@@ -1,4 +1,3 @@
-import os
 #!/usr/bin/env python3
 """
 预处理 GSE140841 brain bulk RNA-seq 数据
@@ -24,7 +23,7 @@ warnings.filterwarnings('ignore')
 import numpy as np
 import pandas as pd
 
-PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT") or Path(__file__).resolve().parents[3])
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / 'data/external-validation'
 PROCESSED_DIR = PROJECT_ROOT / 'processed-data/step6_external_validation'
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)

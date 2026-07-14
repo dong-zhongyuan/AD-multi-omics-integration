@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
 """
-GenKI Virtual Knockout Script (GSE292141 adapter)
+GenKI Virtual Knockout Script (TMS adapter)
 基于 GenKI 仓库的完整虚拟敲除实现（VGAE-based）
-该版本保留原始 step4 逻辑，只将输入切换到 GSE292141 派生的兼容单细胞 h5ad
+
+⚠️ 2026-07-11 更新：
+  蛋白组不再走 VK（改用 STRING PPI 验证），只对转录组做 GenKI VK。
+  代谢组改用 KEGG MRN 注释（见 step4_metabolomics_mrn.py）。
 
 用法：
   # 正向敲除（默认）：敲除脑端基因，观察血液端基因
   python run_GenKI_knockout.py
-  
+
   # 反向敲除：敲除血液端基因，观察脑端基因
   python run_GenKI_knockout.py --direction reverse
-  
-  # 指定组学类型
+
+  # VK 只处理 transcriptomics（蛋白组改走 PPI）
   python run_GenKI_knockout.py --omics transcriptomics
-  python run_GenKI_knockout.py --omics proteomics transcriptomics
-  
-  # 指定输出目录
-  python run_GenKI_knockout.py --output-dir /path/to/output
 """
 
 import sys
@@ -35,7 +34,8 @@ from functools import partial
 import argparse
 
 # 先导入配置管理器（在添加GenKI路径之前）
-sys.path.insert(0, r"")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 from tools.config_loader import get_config
 from tools.gene_id_converter import ensembl_to_symbol
 config = get_config()
@@ -46,7 +46,7 @@ def rstr(path):
     return str(path).replace('\\', '/')
 
 # 再添加 GenKI 到路径
-sys.path.insert(0, r"tools/GenKI-master")
+sys.path.insert(0, str(PROJECT_ROOT / "tools" / "GenKI-master"))
 
 from GenKI.train import VGAE_trainer, VariationalGCNEncoder
 from GenKI.model import VGAE
@@ -58,13 +58,14 @@ from GenKI.pcNet import pcNet
 # 配置参数（全局变量，将在main中根据命令行参数设置）
 # ============================================================================
 
-# 输入输出路径
-SC_DATA_PATH = rstr(config.get_path("paths.processed_data_dir")) + "/step4_single_cell_gse292141/GSE292141_expression_matrix_for_step4.h5ad"
-STEP3_OUTPUT_DIR = rstr(config.get_path("paths.output_dir")) + "/step3_hub_identification"
+# 输入输出路径（用 PROJECT_ROOT 避免 /mnt/d/ 问题）
+SC_DATA_PATH = str(PROJECT_ROOT / "processed-data" / "step4_single_cell_5xfad" / "5xFAD_expression_matrix_for_step4.h5ad")
+STEP3_OUTPUT_DIR = str(PROJECT_ROOT / "output" / "step3_hub_identification")
 OUTPUT_DIR = None  # 将在main中设置
 DIRECTION = "forward"  # 将在main中设置
 
 # 组学列表（将在main中设置）
+# 蛋白组和转录组都走 VK（PPI 无法体现跨组织方向性）
 OMICS_LIST = ["proteomics", "transcriptomics"]
 
 # VGAE 训练参数（严格按照 GenKI 默认值）
@@ -79,7 +80,7 @@ RANDOM_STATE = int(config.get_parameter("virtual_knockout.genki.random_state")) 
 N_COMP = int(config.get_parameter("virtual_knockout.genki.n_comp"))  # PCA 成分数
 SCALE_SCORES = True  # 是否标准化（GenKI默认）
 SYMMETRIC = True  # 是否对称化（GenKI默认）
-Q = float(config.get_parameter("virtual_knockout.genki.q_threshold"))  # 阈值分位数（降低以保留更多边，VGAE 需要足够的边数）
+Q = 0.5  # 降低阈值从0.85→0.5，保留更多包含低表达基因的边
 
 # 虚拟敲除参数
 N_PERMUTATIONS = 10  # 置换检验次数（优化：从30降到10，节省67%时间）
@@ -91,7 +92,7 @@ DISTANCE_METHOD = "KL"  # 距离度量方法（KL 散度）
 # ============================================================================
 
 
-def compute_common_hvg(h5ad_path, tissue_types=["CSF", "PBMC"], target_genes=None, n_top_genes=500):
+def compute_common_hvg(h5ad_path, tissue_types=["Brain", "Blood"], target_genes=None, n_top_genes=500):
     """
     在合并的多组织数据上计算HVG，确保所有组织使用相同的基因集
     
@@ -501,12 +502,21 @@ def load_cross_tissue_hubs_and_backtrace(omics_name, direction='forward'):
     返回: [(gene, category), ...] 列表, 以及所有target基因列表
     """
     # 从 eigengene_analysis 加载筛选后的边
-    edges_file = Path(STEP3_OUTPUT_DIR) / "eigengene_analysis" / omics_name / "filtered_cross_tissue_edges.csv"
-    
+    # 转录组用预筛选文件，其他用原始 filtered 文件
+    if omics_name == "transcriptomics":
+        prescreened = Path(STEP3_OUTPUT_DIR) / "eigengene_analysis" / omics_name / "prescreened_cross_tissue_edges.csv"
+        if prescreened.exists():
+            edges_file = prescreened
+            print(f"  Using prescreened edges: {edges_file}")
+        else:
+            edges_file = Path(STEP3_OUTPUT_DIR) / "eigengene_analysis" / omics_name / "filtered_cross_tissue_edges.csv"
+    else:
+        edges_file = Path(STEP3_OUTPUT_DIR) / "eigengene_analysis" / omics_name / "filtered_cross_tissue_edges.csv"
+
     if not edges_file.exists():
         print(f"  WARNING: {edges_file} not found")
         return [], []
-    
+
     edges_df = pd.read_csv(edges_file)
     print(f"  Loaded {len(edges_df)} filtered edges from {edges_file}")
     
@@ -531,8 +541,9 @@ def load_cross_tissue_hubs_and_backtrace(omics_name, direction='forward'):
     # 所有基因标记为 'eigengene_filtered' 类别
     hub_genes_with_category = [(gene, 'eigengene_filtered') for gene in knockout_genes]
     
-    # 转录组学：source列是Ensembl ID，需要转换为Gene Symbol
+    # 转录组学：5xFAD 数据已经是 gene symbol（人同源），不需要 Ensembl 转换
     if omics_name == "transcriptomics":
+        print(f"  Transcriptomics genes already in symbol format (5xFAD ortholog-mapped), skipping Ensembl conversion", flush=True)
         print(f"  Converting Ensembl IDs to gene symbols...", flush=True)
 
         # 收集所有需要转换的Ensembl ID
@@ -586,18 +597,9 @@ def load_cross_tissue_hubs_and_backtrace(omics_name, direction='forward'):
     # 对observation_genes进行相同的映射处理
     observation_genes_mapped = []
     if omics_name == "transcriptomics":
-        print(f"  Converting {len(observation_genes)} observation genes from Ensembl IDs to symbols...", flush=True)
-        
-        # 使用统一的ID转换工具
-        obs_mapping = ensembl_to_symbol(observation_genes)
-        
-        for gene_id in observation_genes:
-            if gene_id in obs_mapping:
-                gene_symbol = obs_mapping[gene_id]
-                observation_genes_mapped.append(gene_symbol)
-            else:
-                print(f"    WARNING: Observation gene {gene_id} not found in mapping", flush=True)
-        print(f"  Successfully converted {len(observation_genes_mapped)}/{len(observation_genes)} observation genes to symbols", flush=True)
+        # 5xFAD 数据已经是 gene symbol，不需要转换
+        observation_genes_mapped = observation_genes
+        print(f"  Observation genes already in symbol format, using directly", flush=True)
     elif omics_name == "proteomics":
         print(f"  Mapping {len(observation_genes)} observation gene names to symbols...", flush=True)
         for gene_name in observation_genes:
@@ -632,13 +634,23 @@ def build_pcnet(data_df, n_comp=3, scale_scores=True, symmetric=False, q=0.95):
         print(f"    WARNING: Found {np.isnan(X).sum()} NaN values, filling with 0...")
         X = np.nan_to_num(X, nan=0.0)
 
+    # Quantile normalization（让低表达基因的方差不被高表达基因压制）
+    print(f"    Applying quantile normalization...")
+    for j in range(X.shape[1]):
+        col = X[:, j]
+        order = np.argsort(col)
+        ranks = np.empty_like(order)
+        ranks[order] = np.arange(len(col))
+        sorted_vals = np.sort(col)
+        X[:, j] = sorted_vals[ranks]
+
     # 标准化
     X_mean = X.mean(axis=0)
     X_std = X.std(axis=0)
-    
+
     # 避免除以0：如果std为0，设为1（这些基因不会有贡献）
     X_std[X_std < 1e-8] = 1.0
-    
+
     X = (X - X_mean) / X_std
     
     # 再次检查NaN（防御性编程）
@@ -1136,7 +1148,11 @@ def virtual_knockout_genki_cross_tissue(
     print(f"\n[Step 5/6] Negative control analysis...", flush=True)
     
     # 加载边文件，获取所有在因果网络中的基因
-    edges_file = Path(STEP3_OUTPUT_DIR) / "eigengene_analysis" / output_prefix / "filtered_cross_tissue_edges.csv"
+    if output_prefix == 'transcriptomics':
+        prescreened = Path(STEP3_OUTPUT_DIR) / "eigengene_analysis" / output_prefix / "prescreened_cross_tissue_edges.csv"
+        edges_file = prescreened if prescreened.exists() else Path(STEP3_OUTPUT_DIR) / "eigengene_analysis" / output_prefix / "filtered_cross_tissue_edges.csv"
+    else:
+        edges_file = Path(STEP3_OUTPUT_DIR) / "eigengene_analysis" / output_prefix / "filtered_cross_tissue_edges.csv"
     if edges_file.exists():
         edges_df = pd.read_csv(edges_file)
 
@@ -1347,8 +1363,8 @@ def virtual_knockout_genki_cross_tissue(
             "KL_divergence_per_gene_std": [gene_kl_divergences.std()],
             "n_target_genes": [len(target_genes)],
             "n_significant_targets": [sum([r['significant'] for r in negative_control_results]) if len(negative_control_results) > 0 else 0],
-            "knockout_tissue": ["CSF"],
-            "observe_tissue": ["PBMC"],
+            "knockout_tissue": ["Brain"],
+            "observe_tissue": ["Blood"],
             "n_csf_cells": [n_csf_cells],
             "n_pbmc_cells": [n_pbmc_cells],
         }
@@ -1387,9 +1403,9 @@ def virtual_knockout_genki_cross_tissue(
 def main():
     """依次执行所有组学类型的正向和反向虚拟敲除"""
     global OUTPUT_DIR, DIRECTION, OMICS_LIST
-    
-    # 所有组学类型
-    all_omics = ['proteomics', 'transcriptomics']
+
+    # 转录组（预筛选后）
+    all_omics = ['transcriptomics']
     
     # 所有方向
     all_directions = ['forward', 'reverse']
@@ -1406,11 +1422,11 @@ def main():
             DIRECTION = direction
             OMICS_LIST = [omics_name]
             
-            # 设置输出目录
+            # 设置输出目录（用 PROJECT_ROOT 避免 /mnt/d/ 问题）
             if DIRECTION == 'reverse':
-                OUTPUT_DIR = rstr(config.get_path("paths.output_dir")) + "/step4_virtual_knockout/GenKI_NO3_reverse"
+                OUTPUT_DIR = str(PROJECT_ROOT / "output" / "step4_virtual_knockout" / "GenKI_NO3_reverse")
             else:
-                OUTPUT_DIR = rstr(config.get_path("paths.output_dir")) + "/step4_virtual_knockout/GenKI_NO3"
+                OUTPUT_DIR = str(PROJECT_ROOT / "output" / "step4_virtual_knockout" / "GenKI_NO3")
             
             print("\n" + "=" * 80)
             print(f"开始: {omics_name.upper()} - {DIRECTION.upper()}")
@@ -1448,7 +1464,7 @@ def main():
                 print(f"\n[Computing common HVG across CSF and PBMC]")
                 common_genes = compute_common_hvg(
                     SC_DATA_PATH,
-                    tissue_types=["CSF", "PBMC"],
+                    tissue_types=["Brain", "Blood"],
                     target_genes=all_protected_genes,
                     n_top_genes=500
                 )
@@ -1463,7 +1479,7 @@ def main():
                 print(f"\n[Loading CSF data]")
                 csf_data = load_single_cell_data_h5ad(
                     SC_DATA_PATH,
-                    tissue_type="CSF",
+                    tissue_type="Brain",
                     target_genes=None,  # 不再需要，已在common_genes中
                     max_cells=3000,
                     common_genes=common_genes,  # 传入统一的基因列表
@@ -1472,7 +1488,7 @@ def main():
                 print(f"\n[Loading PBMC data]")
                 pbmc_data = load_single_cell_data_h5ad(
                     SC_DATA_PATH,
-                    tissue_type="PBMC",
+                    tissue_type="Blood",
                     target_genes=None,  # 不再需要，已在common_genes中
                     max_cells=3000,
                     common_genes=common_genes,  # 传入统一的基因列表
@@ -1482,10 +1498,10 @@ def main():
                     print(f"  Failed to load data for {omics_name}, skipping...")
                     continue
 
-                # Metacell 聚合（提高低表达基因检测率）- 带缓存
+                # Metacell 聚合（降低维度，让单基因敲除影响更显著）- 带缓存
                 print(f"\n[Aggregating to metacells]")
                 metacell_cache_path = os.path.join(OUTPUT_DIR, f"{omics_name}_metacells.pkl")
-                
+
                 if os.path.exists(metacell_cache_path):
                     print(f"  Loading cached metacells from: {metacell_cache_path}")
                     with open(metacell_cache_path, 'rb') as f:
@@ -1495,8 +1511,8 @@ def main():
                     print(f"  Loaded CSF: {csf_data.shape}, PBMC: {pbmc_data.shape}")
                 else:
                     print(f"  Computing metacells (will cache for future runs)...")
-                    csf_data = aggregate_to_metacells(csf_data, n_metacells=100, min_cells_per_metacell=3)
-                    pbmc_data = aggregate_to_metacells(pbmc_data, n_metacells=100, min_cells_per_metacell=3)
+                    csf_data = aggregate_to_metacells(csf_data, n_metacells=200, min_cells_per_metacell=3)
+                    pbmc_data = aggregate_to_metacells(pbmc_data, n_metacells=200, min_cells_per_metacell=3)
                     
                     # 保存缓存
                     print(f"  Saving metacells to cache: {metacell_cache_path}")
