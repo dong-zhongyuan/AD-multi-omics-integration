@@ -6,22 +6,6 @@ Code and instructions to reproduce:
 > Drug Repurposing Opportunities and Diagnostic Biomarker Candidates in
 > Alzheimer's Disease*
 
-## Citation
-
-If you use this code, please cite:
-
-```bibtex
-@article{dong2026worldmodel,
-  title={World Model for Brain-Blood Mapping and Virtual Knockout Validation
-         Uncovers Drug Repurposing Opportunities and Diagnostic Biomarker
-         Candidates in Alzheimer's Disease},
-  author={Dong, Zhongyuan and Meng, Xuanlin and Wang, Lianghua},
-  journal={Nature Aging (or Nature Machine Intelligence)},
-  year={2026},
-  note={Z. Dong and X. Meng contributed equally}
-}
-```
-
 > **Authors:** Zhongyuan Dong$^{\dagger}$, Xuanlin Meng$^{\dagger,\ddagger}$, Lianghua Wang$^*$
 > ($^\dagger$ contributed equally; $^\ddagger$ co-corresponding; $^*$ corresponding)
 
@@ -94,7 +78,7 @@ large processed `.h5ad` intermediates (3.9 GB; regenerated), model weights
 
 ```bash
 # 1. environment
-pip install -r environment/requirements.txt
+pip install -r requirements.txt
 
 # 2. R packages (for figure generation)
 Rscript -e 'install.packages(c("ggplot2","circlize","ggridges","patchwork","rayshader")); remotes::install_github("SAngiamo/ggsankeyfier")'
@@ -146,7 +130,7 @@ python build_figure1_pptx.py
 
 ## Reproducibility guarantees
 
-- **Pinned versions** in `environment/requirements.txt`.
+- **Pinned versions** in `requirements.txt`.
 - **Fixed random seeds** (`code/tools/hepaworld/utils/seed.py`).
 - **Every manuscript number** traces to a script + output file (`docs/script_to_output_map.md`).
 - **No confidential/restricted data** committed; ADNI accessed only by application.
