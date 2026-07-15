@@ -16,7 +16,7 @@
 
 **Data collection:** No primary data collection. All datasets were obtained from public repositories (GEO GSE329430, ADNI, BioStudies S-BSST1423, figshare doi:10.6084/m9.figshare.8278114).
 
-**Data analysis:** Custom Neural ODE + Sinkhorn OT framework (Python, PyTorch). All analysis code is available in a public GitHub repository at https://github.com/dong-zhongyuan/AD-Multi-Omics-Integration under the MIT license, with a DOI-minted versioned archive deposited at Zenodo (https://doi.org/10.5281/zenodo.XXXXXXX). The repository will be accessible to reviewers at the time of submission. Key software: scanpy 1.11.5, gseapy 1.3.0, lifelines 0.27.7, R packages ggplot2/circlize/ggridges/ggsankeyfier. Full version list in environment/requirements.txt.
+**Data analysis:** Custom Neural ODE + Sinkhorn OT framework (Python, PyTorch). All analysis code is available in a public GitHub repository at https://github.com/dong-zhongyuan/AD-Multi-Omics-Integration under the MIT license, accessible to reviewers at the time of submission. Key software: scanpy 1.11.5, gseapy 1.3.0, lifelines 0.27.7, R packages ggplot2/circlize/ggridges/ggsankeyfier. Full version list in requirements.txt.
 
 **AI-use disclosure:** Large language models (Z.ai GLM and OpenAI GPT) were used as writing assistants for code drafting, language editing, and formatting of the manuscript text and figures. All scientific content, analyses, interpretations, and conclusions were conceived, verified, and approved by the authors, who take full responsibility for the integrity and accuracy of all reported results.
 
